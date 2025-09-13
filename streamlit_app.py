@@ -1,4 +1,74 @@
 # streamlit_app.py
+
+def to_wide_by_country(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # 1) 국가 열 탐지
+    def auto_detect_country_col(df_):
+        for cand in ["Country","country","국가","국가명","Nation","Region","Country/Region"]:
+            if cand in df_.columns:
+                return cand
+        for c in df_.columns:  # fallback: 첫 번째 문자열 열
+            if not pd.api.types.is_numeric_dtype(df_[c]):
+                return c
+        return None
+
+    country_col = auto_detect_country_col(df)
+    if not country_col:
+        raise ValueError("국가 열을 찾지 못했습니다. (예: Country)")
+
+    # ✅ 2) 탐지한 국가 열을 'Country'로 강제 통일
+    if country_col != "Country":
+        df = df.rename(columns={country_col: "Country"})
+    country_col = "Country"
+
+    # 3) MBTI 열 찾기
+    MBTI_TYPES = [
+        "INTJ","INTP","ENTJ","ENTP",
+        "INFJ","INFP","ENFJ","ENFP",
+        "ISTJ","ISFJ","ESTJ","ESFJ",
+        "ISTP","ISFP","ESTP","ESFP"
+    ]
+    up_map = {c: c.upper().strip() for c in df.columns}
+    mbti_cols_present = [orig for orig, up in up_map.items() if up in MBTI_TYPES]
+
+    # 4) 가로형 처리
+    if len(mbti_cols_present) >= 4:
+        wide = df[[country_col] + mbti_cols_present].copy()
+        # MBTI 열만 대문자로 통일
+        rename_map = {c: up_map[c] for c in mbti_cols_present}
+        wide = wide.rename(columns=rename_map)
+        # 16개 모두 보장
+        for t in MBTI_TYPES:
+            if t not in wide.columns:
+                wide[t] = np.nan
+        for t in MBTI_TYPES:
+            wide[t] = pd.to_numeric(wide[t], errors="coerce")
+        wide = wide[[country_col] + MBTI_TYPES]
+        return wide, country_col
+
+    # 5) 세로형 처리
+    lower = {c.lower(): c for c in df.columns}
+    type_col = next((lower[c] for c in ["type","mbti","mbti_type","유형"] if c in lower), None)
+    value_col = next((lower[c] for c in ["value","percent","percentage","ratio","비율","퍼센트","값"] if c in lower), None)
+    if type_col and value_col:
+        long = df[[country_col, type_col, value_col]].copy()
+        long.columns = [country_col, "Type", "Value"]
+        long["Type"] = long["Type"].astype(str).str.upper().str.strip()
+        long = long[long["Type"].isin(MBTI_TYPES)]
+        long["Value"] = pd.to_numeric(long["Value"], errors="coerce")
+        wide = long.pivot_table(index=country_col, columns="Type", values="Value", aggfunc="mean").reset_index()
+        for t in MBTI_TYPES:
+            if t not in wide.columns:
+                wide[t] = np.nan
+        wide = wide[[country_col] + MBTI_TYPES]
+        return wide, country_col
+
+    raise ValueError("MBTI 16개 열(가로형) 또는 (Type, Value) 구성(세로형)을 찾지 못했습니다.")
+
+
+
 import os
 import io
 import json
